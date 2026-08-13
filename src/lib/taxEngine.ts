@@ -1,4 +1,13 @@
-import { TAX_BRACKETS, DEDUCTION_RULES, getQuotientAtStep } from "./brackets"
+import {
+  TAX_BRACKETS,
+  DEDUCTION_RULES,
+  SS_RATE,
+  SS_RELEVANT_INCOME_SHARE,
+  SS_MIN_MONTHLY,
+  SS_ANNUAL_BASE_CAP,
+  MINIMO_EXISTENCIA_2026,
+  type SsCategory,
+} from "./brackets"
 
 export interface DeductionInputs {
   maritalStatus: "single" | "married" | "single_parent"
@@ -13,6 +22,7 @@ export interface TaxInputs {
   activityYear: 1 | 2 | 3
   hasNHR: boolean
   coefficient: number
+  ssCategory: SsCategory
   nhrRate?: number
   deductions?: DeductionInputs
 }
@@ -79,34 +89,44 @@ export function calcSolidaritySurcharge(taxableIncome: number): number {
   return surcharge
 }
 
-export function calcSocialSecurity(grossAnnual: number, coefficient: number, activityYear: 1 | 2 | 3): number {
+// Segurança Social для trabalhadores independentes: 21.4% від "rendimento relevante" —
+// 70% доходу від послуг або 20% доходу від продажу товарів. Це ОКРЕМИЙ коефіцієнт від
+// IRS Art. 31 coefficient (переданого в TaxInputs.coefficient), не той самий.
+export function calcSocialSecurity(grossAnnual: number, ssCategory: SsCategory, activityYear: 1 | 2 | 3): number {
   if (activityYear === 1) return 0
-  return grossAnnual * coefficient * 0.214
+  if (grossAnnual <= 0) return 0
+
+  const relevantIncome = grossAnnual * SS_RELEVANT_INCOME_SHARE[ssCategory]
+  const cappedRelevantIncome = Math.min(relevantIncome, SS_ANNUAL_BASE_CAP)
+  const contribution = cappedRelevantIncome * SS_RATE
+
+  return Math.max(contribution, SS_MIN_MONTHLY * 12)
 }
 
-export function calcIRSWithQuotient(
+// Art. 69.º CIRS: спільне оподаткування подружжя ділить taxableBase на 2, рахує IRS від
+// половини і множить результат на 2 (quociente conjugal). Діти НЕ впливають на цей
+// дільник — вони дають лише окремий податковий кредит, див. calcDependentTaxCredit.
+export function applyMarriedSplit(
   taxableBase: number,
-  maritalStatus: "single" | "married" | "single_parent",
-  numChildren: number
+  maritalStatus: DeductionInputs["maritalStatus"]
 ): number {
-  const baseQ = getQuotientAtStep(maritalStatus, 0)
-  let effectiveTax = calcIRS(taxableBase / baseQ) * baseQ
-
-  for (let i = 0; i < numChildren; i++) {
-    const prevQ = getQuotientAtStep(maritalStatus, i)
-    const nextQ = getQuotientAtStep(maritalStatus, i + 1)
-    const cap = i < 2 ? 300 : 150
-
-    const taxBefore = calcIRS(taxableBase / prevQ) * prevQ
-    const taxAfter = calcIRS(taxableBase / nextQ) * nextQ
-    effectiveTax -= Math.min(taxBefore - taxAfter, cap)
+  // Art. 70.º CIRS — mínimo de existência: дохід на цьому рівні чи нижче повністю
+  // звільнений від IRS. Спрощення: поріг не масштабується для married joint taxation.
+  if (taxableBase <= MINIMO_EXISTENCIA_2026) return 0
+  if (maritalStatus === "married") {
+    return calcIRS(taxableBase / 2) * 2
   }
+  return calcIRS(taxableBase)
+}
 
-  return Math.max(0, effectiveTax)
+// Art. 78-A CIRS: фіксований податковий кредит за утриманця (спрощено — базова ставка
+// €600/дитину; вищі ставки для дітей до 3/6 років не моделюються, див. brackets.ts).
+export function calcDependentTaxCredit(numChildren: number): number {
+  return numChildren * DEDUCTION_RULES.depCreditPerChild
 }
 
 export function calcAll(inputs: TaxInputs): TaxResult {
-  const { grossAnnual, activityYear, hasNHR, coefficient, nhrRate = 0.2, deductions } = inputs
+  const { grossAnnual, activityYear, hasNHR, coefficient, ssCategory, nhrRate = 0.2, deductions } = inputs
 
   const taxableBase = grossAnnual * coefficient
   const taxableBaseReduced = applyNewActivityDiscount(taxableBase, activityYear)
@@ -132,15 +152,13 @@ export function calcAll(inputs: TaxInputs): TaxResult {
     educationExpenses * DEDUCTION_RULES.education.rate,
     DEDUCTION_RULES.education.cap
   )
-  const perChildAmount = maritalStatus === "single_parent"
-    ? DEDUCTION_RULES.perChildSingleParent
-    : DEDUCTION_RULES.perChild
-  const deductChildren = numChildren * perChildAmount
+  const deductChildren = calcDependentTaxCredit(numChildren)
   const totalDeduction = deductMortgage + deductHealth + deductEducation + deductChildren
 
-  // Apply family quotient to progressive IRS (freelancer mode only)
-  const familyQuotient = getQuotientAtStep(maritalStatus, numChildren)
-  const grossIRS = calcIRSWithQuotient(taxableBaseReduced, maritalStatus, numChildren)
+  // Art. 69.º quociente conjugal: 2 для married (спільне оподаткування), 1 інакше.
+  // Це вже не "family quotient" у старому сенсі — діти на нього не впливають.
+  const familyQuotient = maritalStatus === "married" ? 2 : 1
+  const grossIRS = applyMarriedSplit(taxableBaseReduced, maritalStatus)
 
   // Collection deductions applied to tax (not base)
   const irsFreelancer = Math.max(0, grossIRS - totalDeduction)
@@ -149,7 +167,7 @@ export function calcAll(inputs: TaxInputs): TaxResult {
   const solidarityFL  = calcSolidaritySurcharge(taxableBaseReduced)
   const solidarityNHR = calcSolidaritySurcharge(taxableBase)
 
-  const socialSecurity = calcSocialSecurity(grossAnnual, coefficient, activityYear)
+  const socialSecurity = calcSocialSecurity(grossAnnual, ssCategory, activityYear)
 
   const totalTaxFL  = irsFreelancer + solidarityFL
   const totalTaxNHR = irsNHR + solidarityNHR

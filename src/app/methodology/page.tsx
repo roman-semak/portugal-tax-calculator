@@ -21,7 +21,7 @@ const sources = [
     href: "https://info.portaldasfinancas.gov.pt/pt/informacao_fiscal/codigos_tributarios/cirs_rep/ra/Pages/irs68ra_202412.aspx",
   },
   {
-    label: "Código do IRS: Artigo 72.º, NHR 20%",
+    label: "Código do IRS: Artigo 72.º, NHR 20% (regime encerrado a novos requerentes desde 2024)",
     href: "https://info.portaldasfinancas.gov.pt/pt/informacao_fiscal/codigos_tributarios/cirs_rep/ra/Pages/irs72ra_202310.aspx",
   },
   {
@@ -29,12 +29,33 @@ const sources = [
     href: "https://info.portaldasfinancas.gov.pt/pt/informacao_fiscal/codigos_tributarios/irs/Pages/irs68a.aspx",
   },
   {
-    label: "Segurança Social: trabalhadores independentes",
+    label: "Código do IRS: Artigo 69.º, quociente conjugal",
+    href: "https://info.portaldasfinancas.gov.pt/pt/informacao_fiscal/codigos_tributarios/cirs_rep/Pages/irs69.aspx",
+  },
+  {
+    label: "Código do IRS: Artigo 78.º-A, deduções pelos dependentes",
+    href: "https://info.portaldasfinancas.gov.pt/pt/informacao_fiscal/codigos_tributarios/cirs_rep/Pages/irs78a.aspx",
+  },
+  {
+    label: "Código do IRS: Artigo 25.º, deduções específicas Categoria A",
+    href: "https://info.portaldasfinancas.gov.pt/pt/informacao_fiscal/codigos_tributarios/cirs_rep/Pages/irs25.aspx",
+  },
+  {
+    label: "Segurança Social: trabalhadores independentes (rendimento relevante 70%/20%)",
     href: "https://www.seg-social.pt/trabalhadores-independentes",
+  },
+  {
+    label: "Lei n.º 73-A/2025 (OE2026): escalões de IRS 2026",
+    href: "https://diariodarepublica.pt/",
   },
 ]
 
 const inputs = [
+  {
+    name: "Тип контракту",
+    effect:
+      "B2B/ФОП (Категорія B, `calcAll`) або Найм (Категорія A, `calcEmployeeAll`). Перемикає весь набір інпутів і вихідний рушок — це два незалежні розрахунки, що не діляться проміжними значеннями.",
+  },
   {
     name: "Дохід",
     effect:
@@ -43,22 +64,27 @@ const inputs = [
   {
     name: "Період доходу",
     effect:
-      "Перемикач `на рік / на місяць` змінює тільки спосіб введення і відображення. Для engine місячний дохід множиться на 12.",
+      "Перемикач `на рік / на місяць` змінює спосіб введення. Для B2B місячний дохід множиться на 12 виплат/рік, для найму — на 14 (12 місяців + subsídio de férias + subsídio de Natal).",
   },
   {
     name: "Рік активності",
     effect:
-      "Для IRS це податковий період активності; для фізосіб він зазвичай збігається з календарним роком. 1-й період: база IRS 50%, 2-й: 75%, 3-й і далі: повна база. Segurança Social має окреме правило перших 12 місяців.",
+      "Тільки для B2B. Податковий період активності; для фізосіб він зазвичай збігається з календарним роком. 1-й період: база IRS 50%, 2-й: 75%, 3-й і далі: повна база. Segurança Social має окреме правило перших 12 місяців.",
   },
   {
-    name: "NHR",
+    name: "NHR / IFICI",
     effect:
-      "Коли увімкнений, калькулятор порівнює freelancer-режим із NHR і показує той режим, який дає більший net. NHR IRS рахується за flat rate 20%.",
+      "Коли увімкнений, калькулятор порівнює стандартний режим з flat rate 20% і показує той, який дає більший net. Застосовується однаково і в B2B, і в режимі найму. Стара програма NHR закрита для нових заявників з 2024 року — актуальна назва режиму IFICI.",
   },
   {
     name: "Тип активності",
     effect:
-      "Визначає coefficient, тобто частку gross доходу, яка входить у taxable base для simplified regime.",
+      "Тільки для B2B. Визначає IRS-коефіцієнт (Art. 31 CIRS) для taxable base та окремо SS-категорію (services/goods) для Segurança Social — це два різні коефіцієнти.",
+  },
+  {
+    name: "Субсидія на харчування",
+    effect:
+      "Тільки для найму. Звільнена від IRS і TSU до ліміту (€10.46/день картка, €6.15/день готівка); різниця понад ліміт оподатковується як зарплата.",
   },
   {
     name: "Сімейний стан",
@@ -89,7 +115,7 @@ const outputRows = [
   ["irsFreelancer", "Прогресивний IRS після family quotient і collection deductions."],
   ["irsNHR", "NHR IRS: taxableBase * 20%."],
   ["solidarityFL / solidarityNHR", "Додатковий solidarity surcharge для високих taxable income."],
-  ["socialSecurity", "Segurança Social: 0 у моделі 1-го року активності, далі grossAnnual * coefficient * 21.4%. На практиці перше звільнення прив'язане до перших 12 місяців після початку активності, не до календарного року."],
+  ["socialSecurity", "Segurança Social: 0 у моделі 1-го року активності, далі min(grossAnnual * ssShare, cap) * 21.4%, де ssShare = 70% (послуги) або 20% (товари) — ОКРЕМИЙ коефіцієнт від IRS coefficient. На практиці перше звільнення прив'язане до перших 12 місяців після початку активності, не до календарного року."],
   ["netFreelancer / netNHR", "grossAnnual мінус IRS, solidarity surcharge і Segurança Social."],
   ["effectiveRateFL / effectiveRateNHR", "Річні податки режиму / grossAnnual."],
   ["bestMode", "NHR або freelancer, залежно від того, який режим дає більший net, якщо NHR увімкнений."],
@@ -266,17 +292,20 @@ export default function MethodologyPage() {
               <div className="rounded-lg border border-border/50 bg-muted/20 p-4">
                 <h2 className="text-sm font-semibold text-foreground">Сімейний стан</h2>
                 <p className="mt-2">
-                  `single` має base quotient 1.0. `married` має 2.0 і +0.15 за
-                  кожну дитину. `single_parent` має 1.0 без дітей, +0.34 за
-                  першу дитину і +0.20 за кожну наступну.
+                  Art. 69.º CIRS (quociente conjugal): `married` при спільному
+                  оподаткуванні ділить taxableBase на 2, рахує IRS від половини
+                  і множить на 2. `single` і `single_parent` рахуються з дільником
+                  1 — окремого квоцієнта для монобатьківських сімей у поточній
+                  моделі немає.
                 </p>
               </div>
               <div className="rounded-lg border border-border/50 bg-muted/20 p-4">
                 <h2 className="text-sm font-semibold text-foreground">Діти</h2>
                 <p className="mt-2">
-                  Діти впливають двічі: через family quotient і через deduction
-                  до IRS. Для звичайного household це {fmtEUR(DEDUCTION_RULES.perChild)}
-                  {" "}за дитину, для single parent {fmtEUR(DEDUCTION_RULES.perChildSingleParent)}.
+                  Діти НЕ впливають на quociente conjugal (дільник 2/1) — це поширена
+                  помилка. Вони дають окремий податковий кредит: {fmtEUR(DEDUCTION_RULES.depCreditPerChild)}
+                  {" "}за дитину (базова ставка Art. 78-A CIRS для дітей старше 3 років;
+                  вищі ставки для молодших дітей тут не моделюються).
                 </p>
               </div>
             </div>
@@ -315,16 +344,21 @@ export default function MethodologyPage() {
           </CardHeader>
           <CardContent className="space-y-4 text-sm leading-6 text-muted-foreground">
             <p>
-              NHR рахується окремо від freelancer IRS: `irsNHR = taxableBase * 0.20`.
-              Якщо NHR вимкнений, калькулятор не застосовує NHR як best mode, але
-              reverse block може показувати його як неактивний сценарій.
+              NHR/IFICI рахується окремо від прогресивного IRS: `irsNHR = taxableBase * 0.20`.
+              Стара програма NHR закрита для нових заявників з 2024 року (реєстрація
+              завершилась 31.03.2025); її замінила IFICI — та сама ставка 20%, але
+              лише для кваліфікованих фахівців у визначених секторах, які не були
+              резидентами Португалії останні 5 років, на 10 років без продовження.
+              Застосовується і до Категорії A (найм), і до Категорії B (ФОП).
             </p>
             <p>
-              Segurança Social у коді: `0` для першого року активності, далі
-              `grossAnnual * coefficient * 0.214`. Це наближення для UI: офіційне
-              перше enquadramento Segurança Social прив&apos;язане до перших 12 місяців
-              після початку активності, а не до календарного року. Це впливає і
-              на freelancer, і на NHR net.
+              Segurança Social для ФОП у коді: `0` для першого року активності, далі
+              `min(grossAnnual * ssShare, cap) * 0.214`, де `ssShare` — 70% для послуг
+              або 20% для товарів (Decreto-Lei 2/2018), НЕ IRS-коефіцієнт Art. 31.
+              База обмежена стелею 12×IAS і має мінімум €20/міс. Офіційне перше
+              enquadramento прив&apos;язане до перших 12 місяців після початку
+              активності, а не до календарного року — калькулятор наближує це як
+              `activityYear === 1`.
             </p>
             <p>
               Solidarity surcharge застосовується до taxable income понад

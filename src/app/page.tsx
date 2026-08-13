@@ -21,20 +21,23 @@ import { SelectRoot, SelectTrigger, SelectContent, SelectViewport, SelectItem } 
 import { CollapsibleRoot, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
 import { AlertCircle, HelpCircle, Moon, Sun } from "lucide-react"
 import { calcAll, type DeductionInputs } from "@/lib/taxEngine"
+import { calcEmployeeAll } from "@/lib/employeeEngine"
 import { ACTIVITY_COEFFICIENTS } from "@/lib/brackets"
 import { incomeBucket, trackEvent } from "@/lib/analytics"
 import { UI, TOOLTIPS } from "@/lib/constants"
 import { ComparisonTable } from "@/components/ComparisonTable"
 import { BracketVisualizer } from "@/components/BracketVisualizer"
 import { ReverseCalculator } from "@/components/ReverseCalculator"
+import { OpeningTimingCalculator } from "@/components/OpeningTimingCalculator"
+import { ContractComparisonPanel } from "@/components/ContractComparisonPanel"
 import { DeductionsPanel } from "@/components/DeductionsPanel"
-import { DonationPopup } from "@/components/DonationPopup"
 import { PriceDisplayProvider, PriceWithUSD } from "@/components/PriceWithUSD"
 
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`
 const eur = (n: number) => `${Math.round(n).toLocaleString("uk-UA")} €`
 
 type IncomePeriod = "annual" | "monthly"
+type ContractType = "freelancer" | "employee"
 
 const periodLabel = {
   annual: "рік",
@@ -125,7 +128,7 @@ function Header({
             Portugal Tax Calculator
           </p>
           <p className="hidden text-xs text-muted-foreground sm:block">
-            IRS 2025, Freelancer та NHR
+            IRS 2026, B2B/Найм, NHR/IFICI
           </p>
         </Link>
 
@@ -170,9 +173,12 @@ export default function Home() {
   const [incomeAmount, setIncomeAmount] = useState(100000)
   const [incomePeriod, setIncomePeriod] = useState<IncomePeriod>("annual")
   const [showUSD, setShowUSD] = useState(false)
+  const [contractType, setContractType] = useState<ContractType>("freelancer")
   const [activityYear, setActivityYear] = useState<1 | 2 | 3>(1)
   const [hasNHR, setHasNHR] = useState(false)
   const [coeffIdx, setCoeffIdx] = useState(0)
+  const [mealAllowanceDaily, setMealAllowanceDaily] = useState(0)
+  const [mealAllowanceMethod, setMealAllowanceMethod] = useState<"card" | "cash">("card")
   const [deductions, setDeductions] = useState<DeductionInputs>({
     maritalStatus: "single",
     mortgageInterest: 0,
@@ -181,16 +187,55 @@ export default function Home() {
     numChildren: 0,
   })
 
-  const coefficient = ACTIVITY_COEFFICIENTS[coeffIdx].value
-  const grossAnnual = incomePeriod === "annual" ? incomeAmount : incomeAmount * 12
-  const result = calcAll({ grossAnnual, activityYear, hasNHR, coefficient, deductions })
-  const displayMode: "freelancer" | "nhr" = result.bestMode
-  const isNhrApplied = hasNHR && displayMode === "nhr"
-  const nhrNetDifference = Math.abs(result.netNHR - result.netFreelancer)
+  const isEmployee = contractType === "employee"
+  const activity = ACTIVITY_COEFFICIENTS[coeffIdx]
+  const coefficient = activity.value
+  const ssCategory = activity.ssCategory
+  // Freelancer: 12 виплат/рік. Наймана праця: 14 виплат/рік (12 місяців + 2 субсидії).
+  const paymentsPerYear = isEmployee ? 14 : 12
+  const grossAnnual = incomePeriod === "annual" ? incomeAmount : incomeAmount * paymentsPerYear
+
+  const freelancerResult = calcAll({ grossAnnual, activityYear, hasNHR, coefficient, ssCategory, deductions })
+  const employeeResult = calcEmployeeAll({
+    grossAnnual,
+    hasIFICI: hasNHR,
+    mealAllowanceDaily,
+    mealAllowanceMethod,
+    deductions,
+  })
+
+  // Уніфікований вигляд результату для спільного UI (обидва режими мають однакову форму).
+  const view = isEmployee
+    ? {
+        netAnnual: employeeResult.bestNet,
+        irs: employeeResult.bestMode === "ifici" ? employeeResult.irsIFICI : employeeResult.irsStandard,
+        solidarity: employeeResult.bestMode === "ifici" ? employeeResult.solidarityIFICI : employeeResult.solidarityStandard,
+        socialOrSS: employeeResult.ssEmployee,
+        effectiveRate: employeeResult.bestMode === "ifici" ? employeeResult.effectiveRateIFICI : employeeResult.effectiveRateStandard,
+        totalDeduction: employeeResult.totalDeduction,
+        familyQuotient: employeeResult.familyQuotient,
+        taxableBase: employeeResult.taxableIncome,
+        isAltApplied: employeeResult.bestMode === "ifici",
+        altNetDifference: Math.abs(employeeResult.netIFICI - employeeResult.netStandard),
+      }
+    : {
+        netAnnual: freelancerResult.bestNet,
+        irs: freelancerResult.bestMode === "nhr" ? freelancerResult.irsNHR : freelancerResult.irsFreelancer,
+        solidarity: freelancerResult.bestMode === "nhr" ? freelancerResult.solidarityNHR : freelancerResult.solidarityFL,
+        socialOrSS: freelancerResult.socialSecurity,
+        effectiveRate: freelancerResult.bestMode === "nhr" ? freelancerResult.effectiveRateNHR : freelancerResult.effectiveRateFL,
+        totalDeduction: freelancerResult.totalDeduction,
+        familyQuotient: freelancerResult.familyQuotient,
+        taxableBase: freelancerResult.taxableBaseReduced,
+        isAltApplied: freelancerResult.bestMode === "nhr",
+        altNetDifference: Math.abs(freelancerResult.netNHR - freelancerResult.netFreelancer),
+      }
+  const isNhrApplied = hasNHR && view.isAltApplied
+  const altLabel = "NHR / IFICI"
   const nhrExplanation = isNhrApplied
-    ? `NHR застосовується, бо при поточному доході та налаштуваннях він дає більший net, ніж режим Freelancer. Різниця: приблизно ${eur(nhrNetDifference)} на рік.`
-    : `NHR увімкнений, але зараз не застосовується, бо режим Freelancer дає більший або такий самий net при поточному доході, відрахуваннях і типі активності. Різниця: приблизно ${eur(nhrNetDifference)} на рік.`
-  const netAnnual = displayMode === "nhr" ? result.netNHR : result.netFreelancer
+    ? `${altLabel} застосовується, бо при поточному доході та налаштуваннях він дає більший net. Різниця: приблизно ${eur(view.altNetDifference)} на рік.`
+    : `${altLabel} увімкнений, але зараз не застосовується, бо стандартний режим дає більший або такий самий net. Різниця: приблизно ${eur(view.altNetDifference)} на рік.`
+  const netAnnual = view.netAnnual
   const displayDivisor = incomePeriod === "annual" ? 1 : 12
   const inputMax = incomePeriod === "annual" ? 300000 : 25000
   const inputMin = incomePeriod === "annual" ? 10000 : 1000
@@ -203,8 +248,18 @@ export default function Home() {
       to: nextPeriod,
       income_bucket: incomeBucket(grossAnnual),
     })
-    setIncomeAmount((value) => nextPeriod === "annual" ? value * 12 : value / 12)
+    setIncomeAmount((value) => nextPeriod === "annual" ? value * paymentsPerYear : value / paymentsPerYear)
     setIncomePeriod(nextPeriod)
+  }
+
+  function changeContractType(nextType: ContractType) {
+    if (nextType === contractType) return
+    trackEvent("contract_type_change", {
+      from: contractType,
+      to: nextType,
+      income_bucket: incomeBucket(grossAnnual),
+    })
+    setContractType(nextType)
   }
 
   function changeActivityYear(nextYear: 1 | 2 | 3) {
@@ -219,7 +274,7 @@ export default function Home() {
     setHasNHR(nextHasNHR)
     trackEvent("nhr_toggle", {
       enabled: nextHasNHR,
-      currently_applied: nextHasNHR && result.bestMode === "nhr",
+      currently_applied: nextHasNHR && view.isAltApplied,
       income_bucket: incomeBucket(grossAnnual),
     })
   }
@@ -236,7 +291,6 @@ export default function Home() {
     <PriceDisplayProvider showUSD={showUSD} setShowUSD={setShowUSD}>
       <div className="gradient-hero min-h-screen">
         <Header showUSD={showUSD} setShowUSD={setShowUSD} />
-        <DonationPopup />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
 
@@ -259,13 +313,36 @@ export default function Home() {
             <Card className="shadow-lg border-border/60 sticky top-8">
               <CardContent className="pt-6 space-y-5">
 
+                {/* Contract type */}
+                <div className="space-y-2.5">
+                  <Label className="text-xs text-muted-foreground uppercase tracking-widest font-bold">
+                    {UI.contractType.label}
+                  </Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <SegmentButton
+                      active={contractType === "freelancer"}
+                      onClick={() => changeContractType("freelancer")}
+                    >
+                      {UI.contractType.freelancer}
+                    </SegmentButton>
+                    <SegmentButton
+                      active={contractType === "employee"}
+                      onClick={() => changeContractType("employee")}
+                    >
+                      {UI.contractType.employee}
+                    </SegmentButton>
+                  </div>
+                </div>
+
+                <Separator />
+
                 {/* Income input */}
                 <div className="space-y-4">
                   <div className="flex items-center gap-2">
                     <Label className="text-xs text-muted-foreground uppercase tracking-widest font-bold">
-                      Дохід
+                      {isEmployee ? UI.inputs.grossLabelEmployee : "Дохід"}
                     </Label>
-                    <TooltipIcon text={TOOLTIPS.grossIncome} />
+                    <TooltipIcon text={isEmployee ? UI.inputs.grossHelperEmployee : TOOLTIPS.grossIncome} />
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
@@ -304,7 +381,8 @@ export default function Home() {
 
                 <Separator />
 
-                {/* Activity year */}
+                {/* Activity year (freelancer only) */}
+                {!isEmployee && (
                 <div className="space-y-2.5">
                   <div className="flex items-center gap-2">
                     <Label className="text-xs text-muted-foreground uppercase tracking-widest font-bold">
@@ -328,6 +406,7 @@ export default function Home() {
                     ))}
                   </div>
                 </div>
+                )}
 
                 {/* NHR */}
                 <div
@@ -363,7 +442,8 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Activity type */}
+                {/* Activity type (freelancer only) */}
+                {!isEmployee && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <Label className="text-xs text-muted-foreground uppercase tracking-widest font-bold">
@@ -405,6 +485,39 @@ export default function Home() {
                     </SelectContent>
                   </SelectRoot>
                 </div>
+                )}
+
+                {/* Meal allowance (employee only) */}
+                {isEmployee && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs text-muted-foreground uppercase tracking-widest font-bold">
+                      {UI.employee.mealAllowanceLabel}
+                    </Label>
+                    <TooltipIcon text={UI.employee.mealAllowanceHelper} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <SegmentButton
+                      active={mealAllowanceMethod === "card"}
+                      onClick={() => setMealAllowanceMethod("card")}
+                    >
+                      {UI.employee.mealAllowanceMethodCard}
+                    </SegmentButton>
+                    <SegmentButton
+                      active={mealAllowanceMethod === "cash"}
+                      onClick={() => setMealAllowanceMethod("cash")}
+                    >
+                      {UI.employee.mealAllowanceMethodCash}
+                    </SegmentButton>
+                  </div>
+                  <input
+                    type="number"
+                    value={mealAllowanceDaily}
+                    onChange={(e) => setMealAllowanceDaily(Number(e.target.value))}
+                    className="w-full px-3 py-2 bg-muted border border-border/40 rounded-lg text-sm font-semibold text-foreground"
+                  />
+                </div>
+                )}
 
                 <Separator />
 
@@ -417,7 +530,7 @@ export default function Home() {
                     <DeductionsPanel
                       deductions={deductions}
                       onChange={setDeductions}
-                      totalDeduction={result.totalDeduction}
+                      totalDeduction={view.totalDeduction}
                     />
                   </CollapsibleContent>
                 </CollapsibleRoot>
@@ -438,13 +551,11 @@ export default function Home() {
                     <div className="mx-auto flex max-w-3xl flex-col items-center gap-3">
                       {/* Income summary */}
                       <div className="w-full space-y-1 rounded-lg bg-muted/25 p-1">
-                        {result.familyQuotient > 1.0 && (
+                        {view.familyQuotient > 1.0 && (
                           <div className="flex justify-center gap-1.5 px-2 pt-1">
-                            {result.familyQuotient > 1.0 && (
-                              <Badge className="bg-emerald-600 text-white text-[10px] h-5 px-1.5" title={TOOLTIPS.familyQuotient}>
-                                Коеф. {result.familyQuotient.toFixed(2)}
-                              </Badge>
-                            )}
+                            <Badge className="bg-emerald-600 text-white text-[10px] h-5 px-1.5" title={TOOLTIPS.familyQuotient}>
+                              Коеф. {view.familyQuotient.toFixed(2)}
+                            </Badge>
                           </div>
                         )}
                         {[
@@ -510,7 +621,7 @@ export default function Home() {
                             Ставка
                           </span>
                           <span className={`text-lg font-bold ${isNhrApplied ? "text-amber-700 dark:text-amber-300" : "text-primary"}`}>
-                            {pct(displayMode === "nhr" ? result.effectiveRateNHR : result.effectiveRateFL)}
+                            {pct(view.effectiveRate)}
                           </span>
                         </div>
                       </div>
@@ -520,6 +631,18 @@ export default function Home() {
                 </div>
               </CardContent>
             </Card>
+
+            {isEmployee && (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/30 px-4 py-3 text-sm">
+                <span className="flex items-center gap-1.5 text-muted-foreground">
+                  {UI.employee.employerCostLabel}
+                  <TooltipIcon text={UI.employee.employerCostHelper} />
+                </span>
+                <span className="font-semibold tabular-nums">
+                  <PriceWithUSD amountEUR={employeeResult.employerCostMonthly} maximumFractionDigits={0} reserveUSDSpace={false} /> / міс
+                </span>
+              </div>
+            )}
 
             <Card className="shadow-lg border-border/60">
               <CardHeader className="pb-2">
@@ -535,7 +658,7 @@ export default function Home() {
                     trackEvent("tax_detail_tab_change", {
                       tab,
                       income_bucket: incomeBucket(grossAnnual),
-                      mode: displayMode,
+                      contract_type: contractType,
                     })
                   }}
                 >
@@ -543,14 +666,26 @@ export default function Home() {
                     <TabsTrigger value="overview" className="text-xs sm:text-sm">
                       Огляд
                     </TabsTrigger>
+                    {!isEmployee && (
                     <TabsTrigger value="reverse" className="text-xs sm:text-sm">
                       {UI.tabs.reverse}
                     </TabsTrigger>
+                    )}
+                    {!isEmployee && (
                     <TabsTrigger value="years" className="text-xs sm:text-sm">
                       По роках
                     </TabsTrigger>
+                    )}
+                    {!isEmployee && (
+                    <TabsTrigger value="timing" className="text-xs sm:text-sm">
+                      {UI.tabs.timing}
+                    </TabsTrigger>
+                    )}
                     <TabsTrigger value="brackets" className="text-xs sm:text-sm">
                       Шкала ПДФО
+                    </TabsTrigger>
+                    <TabsTrigger value="comparison" className="text-xs sm:text-sm">
+                      {UI.tabs.comparison}
                     </TabsTrigger>
                   </TabsList>
 
@@ -560,22 +695,22 @@ export default function Home() {
                         {[
                           {
                             label: UI.results.totalNet,
-                            value: displayMode === "nhr" ? result.netNHR : result.netFreelancer,
+                            value: view.netAnnual,
                             color: "bg-emerald-500",
                           },
                           {
                             label: UI.results.pdfoPD,
-                            value: displayMode === "nhr" ? result.irsNHR : result.irsFreelancer,
+                            value: view.irs,
                             color: "bg-red-500",
                           },
                           {
                             label: UI.results.socialContribution,
-                            value: result.socialSecurity,
+                            value: view.socialOrSS,
                             color: "bg-amber-500",
                           },
                           {
                             label: UI.results.solidarityTax,
-                            value: displayMode === "nhr" ? result.solidarityNHR : result.solidarityFL,
+                            value: view.solidarity,
                             color: "bg-orange-500",
                           },
                         ].map((segment) =>
@@ -594,40 +729,40 @@ export default function Home() {
                           {
                             label: "Net / Gross",
                             value: {
-                              net: (displayMode === "nhr" ? result.netNHR : result.netFreelancer) / displayDivisor,
+                              net: view.netAnnual / displayDivisor,
                               gross: grossAnnual / displayDivisor,
                             },
-                            share: (displayMode === "nhr" ? result.netNHR : result.netFreelancer) / grossAnnual,
+                            share: view.netAnnual / grossAnnual,
                             color: "text-emerald-600 dark:text-emerald-400",
                             chip: "border-emerald-500/25 bg-emerald-500/10",
                           },
                           {
                             label: UI.results.pdfoPD,
-                            value: (displayMode === "nhr" ? result.irsNHR : result.irsFreelancer) / displayDivisor,
-                            share: (displayMode === "nhr" ? result.irsNHR : result.irsFreelancer) / grossAnnual,
+                            value: view.irs / displayDivisor,
+                            share: view.irs / grossAnnual,
                             color: "text-red-600 dark:text-red-400",
                             chip: "border-red-500/25 bg-red-500/10",
                             tooltip: TOOLTIPS.pdfo,
                           },
                           {
                             label: UI.results.socialContribution,
-                            value: result.socialSecurity / displayDivisor,
-                            share: result.socialSecurity / grossAnnual,
+                            value: view.socialOrSS / displayDivisor,
+                            share: view.socialOrSS / grossAnnual,
                             color: "text-amber-600 dark:text-amber-400",
                             chip: "border-amber-500/25 bg-amber-500/10",
-                            tooltip: TOOLTIPS.socialContribution,
+                            tooltip: isEmployee ? TOOLTIPS.employeeSS : TOOLTIPS.socialContribution,
                           },
                           {
                             label: UI.results.solidarityTax,
-                            value: (displayMode === "nhr" ? result.solidarityNHR : result.solidarityFL) / displayDivisor,
-                            share: (displayMode === "nhr" ? result.solidarityNHR : result.solidarityFL) / grossAnnual,
+                            value: view.solidarity / displayDivisor,
+                            share: view.solidarity / grossAnnual,
                             color: "text-orange-500",
                             chip: "border-orange-500/25 bg-orange-500/10",
                           },
-                          ...(result.totalDeduction > 0 && displayMode === "freelancer" ? [{
+                          ...(view.totalDeduction > 0 && !view.isAltApplied ? [{
                             label: UI.deductions.totalLabel,
-                            value: -result.totalDeduction / displayDivisor,
-                            share: result.totalDeduction / grossAnnual,
+                            value: -view.totalDeduction / displayDivisor,
+                            share: view.totalDeduction / grossAnnual,
                             color: "text-emerald-600 dark:text-emerald-400",
                             chip: "border-emerald-500/25 bg-emerald-500/10",
                           }] : []),
@@ -692,10 +827,10 @@ export default function Home() {
                         })}
                       </div>
 
-                      {result.familyQuotient > 1.0 && (
+                      {view.familyQuotient > 1.0 && (
                         <div className="mx-auto flex max-w-xl justify-between items-center gap-3 rounded-lg bg-emerald-50 px-2 py-2 text-xs border border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800/40">
                           <span className="text-emerald-700 dark:text-emerald-400 font-medium">
-                            Сімейний коефіцієнт: {result.familyQuotient.toFixed(2)}
+                            Сімейний коефіцієнт: {view.familyQuotient.toFixed(2)}
                           </span>
                           <span className="text-right text-[10px] text-emerald-600 dark:text-emerald-500">
                             {TOOLTIPS.familyQuotient}
@@ -705,27 +840,49 @@ export default function Home() {
                     </div>
                   </TabsContent>
 
+                  {!isEmployee && (
                   <TabsContent value="reverse" className="mt-5">
                     <ReverseCalculator
                       activityYear={activityYear}
                       hasNHR={hasNHR}
                       coefficient={coefficient}
+                      ssCategory={ssCategory}
                       deductions={deductions}
                     />
                   </TabsContent>
+                  )}
 
+                  {!isEmployee && (
                   <TabsContent value="years" className="mt-5">
                     <ComparisonTable
                       grossAnnual={grossAnnual}
                       hasNHR={hasNHR}
                       coefficient={coefficient}
+                      ssCategory={ssCategory}
                       deductions={deductions}
                       displayDivisor={displayDivisor}
                     />
                   </TabsContent>
+                  )}
+
+                  {!isEmployee && (
+                  <TabsContent value="timing" className="mt-5">
+                    <OpeningTimingCalculator
+                      grossAnnual={grossAnnual}
+                      hasNHR={hasNHR}
+                      coefficient={coefficient}
+                      ssCategory={ssCategory}
+                      deductions={deductions}
+                    />
+                  </TabsContent>
+                  )}
 
                   <TabsContent value="brackets" className="mt-5">
-                    <BracketVisualizer taxableIncome={result.taxableBaseReduced} />
+                    <BracketVisualizer taxableIncome={view.taxableBase} />
+                  </TabsContent>
+
+                  <TabsContent value="comparison" className="mt-5">
+                    <ContractComparisonPanel />
                   </TabsContent>
                 </Tabs>
 
@@ -736,7 +893,7 @@ export default function Home() {
                       : "border-border/60 bg-muted/30 text-muted-foreground"
                   }`}>
                     <p className="font-semibold">
-                      {isNhrApplied ? "NHR активний у розрахунку" : "NHR увімкнений, але не застосований"}
+                      {isNhrApplied ? `${altLabel} активний у розрахунку` : `${altLabel} увімкнений, але не застосований`}
                     </p>
                     <p>{nhrExplanation}</p>
                   </div>
@@ -745,8 +902,7 @@ export default function Home() {
             </Card>
 
             {/* Warning if high tax bracket */}
-            {(displayMode === "nhr" ? result.effectiveRateNHR : result.effectiveRateFL) >
-              0.35 && (
+            {view.effectiveRate > 0.35 && (
               <div className="flex gap-3 p-4 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 rounded-lg">
                 <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
                 <div className="text-sm">
@@ -754,11 +910,7 @@ export default function Home() {
                     {UI.results.warningTitle}
                   </p>
                   <p className="text-red-800 dark:text-red-300">
-                    {UI.results.warningText(
-                      displayMode === "nhr"
-                        ? result.effectiveRateNHR
-                        : result.effectiveRateFL
-                    )}
+                    {UI.results.warningText(view.effectiveRate)}
                   </p>
                 </div>
               </div>

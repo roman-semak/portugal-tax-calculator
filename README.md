@@ -21,8 +21,3 @@ Tracked events avoid exact income values and use income buckets instead:
 - `nhr_toggle`
 - `tax_detail_tab_change`
 - `usd_toggle`
-- `donation_popup_view`
-- `donation_popup_close`
-- `donation_jar_link_click`
-- `donation_jar_button_click`
-- `donation_card_copy`

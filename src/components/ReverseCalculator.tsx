@@ -4,19 +4,21 @@ import { useState } from "react"
 import { Slider } from "@/components/ui/slider"
 import { findRequiredGross } from "@/lib/reverseCalc"
 import { type DeductionInputs } from "@/lib/taxEngine"
+import type { SsCategory } from "@/lib/brackets"
 import { PriceWithUSD } from "@/components/PriceWithUSD"
 
 interface Props {
   activityYear: 1 | 2 | 3
   hasNHR: boolean
   coefficient: number
+  ssCategory: SsCategory
   deductions?: DeductionInputs
 }
 
-export function ReverseCalculator({ activityYear, hasNHR, coefficient, deductions }: Props) {
+export function ReverseCalculator({ activityYear, hasNHR, coefficient, ssCategory, deductions }: Props) {
   const [targetNet, setTargetNet] = useState(5000)
 
-  const result = findRequiredGross(targetNet, activityYear, hasNHR, coefficient, deductions)
+  const result = findRequiredGross(targetNet, activityYear, hasNHR, coefficient, ssCategory, deductions)
   const saving = result.grossFL - result.grossNHR
   const nhrCardClassName = hasNHR
     ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/20 dark:text-amber-400"

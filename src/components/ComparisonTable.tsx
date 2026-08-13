@@ -2,12 +2,14 @@
 
 import { calcAll } from "@/lib/taxEngine"
 import type { DeductionInputs } from "@/lib/taxEngine"
+import type { SsCategory } from "@/lib/brackets"
 import { PriceWithUSD } from "@/components/PriceWithUSD"
 
 interface Props {
   grossAnnual: number
   hasNHR: boolean
   coefficient: number
+  ssCategory: SsCategory
   deductions?: DeductionInputs
   displayDivisor?: number
 }
@@ -18,12 +20,13 @@ export function ComparisonTable({
   grossAnnual,
   hasNHR,
   coefficient,
+  ssCategory,
   deductions,
   displayDivisor = 12,
 }: Props) {
   const years = [1, 2, 3] as const
   const rows = years.map((y) =>
-    calcAll({ grossAnnual, activityYear: y, hasNHR, coefficient, deductions })
+    calcAll({ grossAnnual, activityYear: y, hasNHR, coefficient, ssCategory, deductions })
   )
 
   return (
