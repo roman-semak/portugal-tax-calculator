@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Slider } from "@/components/ui/slider"
 import {
   SelectRoot,
@@ -50,8 +50,14 @@ export function OpeningTimingCalculator({ grossAnnual, hasNHR, coefficient, ssCa
     return { currentMonth: d.getMonth() + 1, currentYear: d.getFullYear() }
   }, [])
 
-  const [openMonth, setOpenMonth] = useState(currentMonth)
-  const [contractMonthlyNet, setContractMonthlyNet] = useState(1500)
+  const [openMonth, setOpenMonth] = useState(Math.min(currentMonth + 1, 12))
+  const [contractMonthlyNet, setContractMonthlyNet] = useState(() =>
+    Math.min(5000, Math.round(grossAnnual / 12 / 50) * 50)
+  )
+
+  useEffect(() => {
+    setContractMonthlyNet(Math.min(5000, Math.round(grossAnnual / 12 / 50) * 50))
+  }, [grossAnnual])
 
   const monthOptions = useMemo(
     () => Array.from({ length: 12 - currentMonth + 1 }, (_, i) => currentMonth + i),

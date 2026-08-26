@@ -6,6 +6,7 @@ import {
   SS_MIN_MONTHLY,
   SS_ANNUAL_BASE_CAP,
   MINIMO_EXISTENCIA_2026,
+  IVA_STANDARD_RATE,
   type SsCategory,
 } from "./brackets"
 
@@ -123,6 +124,35 @@ export function applyMarriedSplit(
 // €600/дитину; вищі ставки для дітей до 3/6 років не моделюються, див. brackets.ts).
 export function calcDependentTaxCredit(numChildren: number): number {
   return numChildren * DEDUCTION_RULES.depCreditPerChild
+}
+
+export type VatPayer = "client" | "self"
+
+export interface VatResult {
+  taxableGrossAnnual: number // йде далі в calcAll як grossAnnual — дохід від послуг без ПДВ
+  vatAmount: number          // ПДВ за рік: або нараховується зверху, або утримується з введеної суми
+  invoicedAmount: number     // повна сума, що фігурує в рахунку клієнту / проходить через його бюджет
+}
+
+// ПДВ ніколи не є доходом ФОП — він або додається зверху до ставки (клієнт платить його
+// окремо понад суму), або вираховується з фіксованого бюджету клієнта (ФОП фактично платить
+// його сам, і оподатковуваний дохід відповідно зменшується). Перемикач `vatPayer` визначає,
+// яке з цих двох тлумачень отримує введена користувачем сума.
+export function calcVat(
+  enteredAmount: number,
+  vatEnabled: boolean,
+  vatPayer: VatPayer,
+  vatRate = IVA_STANDARD_RATE
+): VatResult {
+  if (!vatEnabled) {
+    return { taxableGrossAnnual: enteredAmount, vatAmount: 0, invoicedAmount: enteredAmount }
+  }
+  if (vatPayer === "client") {
+    const vatAmount = enteredAmount * vatRate
+    return { taxableGrossAnnual: enteredAmount, vatAmount, invoicedAmount: enteredAmount + vatAmount }
+  }
+  const taxableGrossAnnual = enteredAmount / (1 + vatRate)
+  return { taxableGrossAnnual, vatAmount: enteredAmount - taxableGrossAnnual, invoicedAmount: enteredAmount }
 }
 
 export function calcAll(inputs: TaxInputs): TaxResult {

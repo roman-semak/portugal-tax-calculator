@@ -75,3 +75,11 @@ export const WORKING_DAYS_PER_YEAR = 220
 
 export const MINIMUM_WAGE_MONTHLY_2026 = 920 // RMMG, 14 виплат/рік
 export const PAYMENTS_PER_YEAR_EMPLOYEE = 14 // 12 місяців + subsídio de férias + subsídio de Natal
+
+// ── ПДВ / IVA (тільки для B2B/ФОП — Категорія B) ───────────────────────────────
+export const IVA_STANDARD_RATE = 0.23 // стандартна ставка, Continente (Açores 16%, Madeira 22% не моделюються)
+// Art. 53.º CIVA, regime de isenção — поріг піднято з €14 500 до €15 000 (Lei n.º 24-D/2022, з 2025).
+export const IVA_EXEMPTION_THRESHOLD = 15000
+// Допуск 25%: до цієї стелі перехід на звичайний режим ПДВ відкладається до 1 січня
+// наступного року; вище — перехід стається негайно, у тому ж році.
+export const IVA_EXEMPTION_TOLERANCE_CEILING = 18750

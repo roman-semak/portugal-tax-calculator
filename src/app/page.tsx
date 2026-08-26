@@ -4,6 +4,7 @@ import { useState } from "react"
 import type { ReactNode } from "react"
 import Link from "next/link"
 import { Slider } from "@/components/ui/slider"
+import { NumberInput } from "@/components/ui/number-input"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -20,7 +21,7 @@ import {
 import { SelectRoot, SelectTrigger, SelectContent, SelectViewport, SelectItem } from "@/components/ui/select"
 import { CollapsibleRoot, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
 import { AlertCircle, HelpCircle, Moon, Sun } from "lucide-react"
-import { calcAll, type DeductionInputs } from "@/lib/taxEngine"
+import { calcAll, calcVat, type DeductionInputs, type VatPayer } from "@/lib/taxEngine"
 import { calcEmployeeAll } from "@/lib/employeeEngine"
 import { ACTIVITY_COEFFICIENTS } from "@/lib/brackets"
 import { incomeBucket, trackEvent } from "@/lib/analytics"
@@ -32,6 +33,7 @@ import { OpeningTimingCalculator } from "@/components/OpeningTimingCalculator"
 import { ContractComparisonPanel } from "@/components/ContractComparisonPanel"
 import { DeductionsPanel } from "@/components/DeductionsPanel"
 import { PriceDisplayProvider, PriceWithUSD } from "@/components/PriceWithUSD"
+import { useExchangeRate } from "@/components/ExchangeRateToast"
 
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`
 const eur = (n: number) => `${Math.round(n).toLocaleString("uk-UA")} €`
@@ -173,12 +175,15 @@ export default function Home() {
   const [incomeAmount, setIncomeAmount] = useState(100000)
   const [incomePeriod, setIncomePeriod] = useState<IncomePeriod>("annual")
   const [showUSD, setShowUSD] = useState(false)
+  const { rate, loading: rateLoading, error: rateError } = useExchangeRate()
   const [contractType, setContractType] = useState<ContractType>("freelancer")
   const [activityYear, setActivityYear] = useState<1 | 2 | 3>(1)
   const [hasNHR, setHasNHR] = useState(false)
   const [coeffIdx, setCoeffIdx] = useState(0)
   const [mealAllowanceDaily, setMealAllowanceDaily] = useState(0)
   const [mealAllowanceMethod, setMealAllowanceMethod] = useState<"card" | "cash">("card")
+  const [vatEnabled, setVatEnabled] = useState(false)
+  const [vatPayer, setVatPayer] = useState<VatPayer>("client")
   const [deductions, setDeductions] = useState<DeductionInputs>({
     maritalStatus: "single",
     mortgageInterest: 0,
@@ -193,7 +198,11 @@ export default function Home() {
   const ssCategory = activity.ssCategory
   // Freelancer: 12 виплат/рік. Наймана праця: 14 виплат/рік (12 місяців + 2 субсидії).
   const paymentsPerYear = isEmployee ? 14 : 12
-  const grossAnnual = incomePeriod === "annual" ? incomeAmount : incomeAmount * paymentsPerYear
+  const enteredAmount = incomePeriod === "annual" ? incomeAmount : incomeAmount * paymentsPerYear
+  // ПДВ тільки для B2B. "self" перевизначає введену суму як таку, що вже включає ПДВ,
+  // тому оподатковуваний grossAnnual нижче за неї — див. calcVat.
+  const vat = calcVat(enteredAmount, vatEnabled && !isEmployee, vatPayer)
+  const grossAnnual = vat.taxableGrossAnnual
 
   const freelancerResult = calcAll({ grossAnnual, activityYear, hasNHR, coefficient, ssCategory, deductions })
   const employeeResult = calcEmployeeAll({
@@ -287,8 +296,25 @@ export default function Home() {
     })
   }
 
+  function changeVatEnabled(nextEnabled: boolean) {
+    setVatEnabled(nextEnabled)
+    trackEvent("vat_toggle", {
+      enabled: nextEnabled,
+      payer: vatPayer,
+      income_bucket: incomeBucket(grossAnnual),
+    })
+  }
+
+  function changeVatPayer(nextPayer: VatPayer) {
+    setVatPayer(nextPayer)
+    trackEvent("vat_payer_change", {
+      payer: nextPayer,
+      income_bucket: incomeBucket(grossAnnual),
+    })
+  }
+
   return (
-    <PriceDisplayProvider showUSD={showUSD} setShowUSD={setShowUSD}>
+    <PriceDisplayProvider showUSD={showUSD} setShowUSD={setShowUSD} rate={rate} loading={rateLoading} error={rateError}>
       <div className="gradient-hero min-h-screen">
         <Header showUSD={showUSD} setShowUSD={setShowUSD} />
 
@@ -360,10 +386,9 @@ export default function Home() {
                     </SegmentButton>
                   </div>
 
-                  <input
-                    type="number"
+                  <NumberInput
                     value={Math.round(incomeAmount)}
-                    onChange={(e) => setIncomeAmount(Number(e.target.value))}
+                    onChange={setIncomeAmount}
                     className="w-full px-4 py-3 bg-muted border border-border/40 rounded-lg text-lg font-semibold text-foreground"
                   />
                   <Slider
@@ -377,6 +402,20 @@ export default function Home() {
                     <span>{inputMin.toLocaleString("uk-UA")} €</span>
                     <span>{inputMax.toLocaleString("uk-UA")} €</span>
                   </div>
+
+                  {showUSD && (
+                    <div className="space-y-2 pt-2 border-t border-border/40">
+                      <Label className="text-xs text-muted-foreground uppercase tracking-widest font-bold">
+                        {UI.inputs.usdLabel}
+                      </Label>
+                      <input
+                        type="number"
+                        value={Math.round(incomeAmount * rate)}
+                        onChange={(e) => setIncomeAmount(Number(e.target.value) / rate)}
+                        className="w-full px-4 py-3 bg-muted border border-border/40 rounded-lg text-lg font-semibold text-foreground"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <Separator />
@@ -487,6 +526,59 @@ export default function Home() {
                 </div>
                 )}
 
+                {/* VAT / IVA (freelancer only) */}
+                {!isEmployee && (
+                <div className="space-y-2.5">
+                  <div
+                    className={`flex items-center gap-3 rounded-lg border p-3 transition-colors ${
+                      vatEnabled
+                        ? "border-primary/50 bg-primary/10"
+                        : "border-border/40 bg-muted/50"
+                    }`}
+                  >
+                    <Switch
+                      id="vat"
+                      checked={vatEnabled}
+                      onCheckedChange={changeVatEnabled}
+                    />
+                    <div className="flex-1 flex items-center gap-2">
+                      <Label htmlFor="vat" className="cursor-pointer text-sm font-medium">
+                        {UI.vat.switchLabel}
+                        <span className="ml-1 text-xs text-muted-foreground">
+                          ({UI.vat.switchDescription})
+                        </span>
+                      </Label>
+                      <TooltipIcon text={TOOLTIPS.vat} />
+                    </div>
+                  </div>
+
+                  {vatEnabled && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Label className="text-xs text-muted-foreground uppercase tracking-widest font-bold">
+                          {UI.vat.payerLabel}
+                        </Label>
+                        <TooltipIcon text={vatPayer === "client" ? TOOLTIPS.vatPayerClient : TOOLTIPS.vatPayerSelf} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <SegmentButton
+                          active={vatPayer === "client"}
+                          onClick={() => changeVatPayer("client")}
+                        >
+                          {UI.vat.payerClient}
+                        </SegmentButton>
+                        <SegmentButton
+                          active={vatPayer === "self"}
+                          onClick={() => changeVatPayer("self")}
+                        >
+                          {UI.vat.payerSelf}
+                        </SegmentButton>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                )}
+
                 {/* Meal allowance (employee only) */}
                 {isEmployee && (
                 <div className="space-y-2">
@@ -510,10 +602,9 @@ export default function Home() {
                       {UI.employee.mealAllowanceMethodCash}
                     </SegmentButton>
                   </div>
-                  <input
-                    type="number"
+                  <NumberInput
                     value={mealAllowanceDaily}
-                    onChange={(e) => setMealAllowanceDaily(Number(e.target.value))}
+                    onChange={setMealAllowanceDaily}
                     className="w-full px-3 py-2 bg-muted border border-border/40 rounded-lg text-sm font-semibold text-foreground"
                   />
                 </div>
@@ -640,6 +731,22 @@ export default function Home() {
                 </span>
                 <span className="font-semibold tabular-nums">
                   <PriceWithUSD amountEUR={employeeResult.employerCostMonthly} maximumFractionDigits={0} reserveUSDSpace={false} /> / міс
+                </span>
+              </div>
+            )}
+
+            {!isEmployee && vatEnabled && (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
+                <span className="flex items-center gap-1.5 text-muted-foreground">
+                  {vatPayer === "client" ? UI.vat.invoiceLineLabel : UI.vat.withheldLineLabel}
+                  <TooltipIcon text={vatPayer === "client" ? TOOLTIPS.vatPayerClient : TOOLTIPS.vatPayerSelf} />
+                </span>
+                <span className="font-semibold tabular-nums">
+                  <PriceWithUSD
+                    amountEUR={vatPayer === "client" ? vat.invoicedAmount / displayDivisor : vat.vatAmount / displayDivisor}
+                    maximumFractionDigits={0}
+                    reserveUSDSpace={false}
+                  /> / {periodLabel[incomePeriod]}
                 </span>
               </div>
             )}
@@ -848,6 +955,8 @@ export default function Home() {
                       coefficient={coefficient}
                       ssCategory={ssCategory}
                       deductions={deductions}
+                      vatEnabled={vatEnabled}
+                      vatPayer={vatPayer}
                     />
                   </TabsContent>
                   )}

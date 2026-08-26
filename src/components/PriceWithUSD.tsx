@@ -3,7 +3,6 @@
 import { createContext, useContext } from "react"
 import type { ReactNode } from "react"
 
-import { useExchangeRate } from "@/components/ExchangeRateToast"
 import { cn } from "@/lib/utils"
 
 interface Props {
@@ -36,16 +35,20 @@ const PriceDisplayContext = createContext<PriceDisplayContextValue>({
 export function PriceDisplayProvider({
   showUSD,
   setShowUSD,
+  rate,
+  loading,
+  error,
   children,
 }: {
   showUSD: boolean
   setShowUSD: (showUSD: boolean) => void
+  rate: number
+  loading: boolean
+  error: boolean
   children: ReactNode
 }) {
-  const exchangeRate = useExchangeRate()
-
   return (
-    <PriceDisplayContext.Provider value={{ showUSD, setShowUSD, ...exchangeRate }}>
+    <PriceDisplayContext.Provider value={{ showUSD, setShowUSD, rate, loading, error }}>
       {children}
     </PriceDisplayContext.Provider>
   )

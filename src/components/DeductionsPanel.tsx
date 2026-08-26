@@ -1,6 +1,7 @@
 "use client"
 
 import { Slider } from "@/components/ui/slider"
+import { NumberInput } from "@/components/ui/number-input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import {
@@ -105,10 +106,9 @@ export function DeductionsPanel({ deductions, onChange, totalDeduction }: Props)
           </Label>
           <TooltipIcon text={TOOLTIPS.mortgage} />
         </div>
-        <input
-          type="number"
+        <NumberInput
           value={deductions.mortgageInterest}
-          onChange={(e) => updateDeduction("mortgageInterest", Number(e.target.value))}
+          onChange={(v) => updateDeduction("mortgageInterest", v)}
           className="w-full px-3 py-2 bg-muted border border-border/40 rounded-lg text-sm font-semibold text-foreground"
         />
         <Slider
@@ -132,10 +132,9 @@ export function DeductionsPanel({ deductions, onChange, totalDeduction }: Props)
           </Label>
           <TooltipIcon text={TOOLTIPS.health} />
         </div>
-        <input
-          type="number"
+        <NumberInput
           value={deductions.healthExpenses}
-          onChange={(e) => updateDeduction("healthExpenses", Number(e.target.value))}
+          onChange={(v) => updateDeduction("healthExpenses", v)}
           className="w-full px-3 py-2 bg-muted border border-border/40 rounded-lg text-sm font-semibold text-foreground"
         />
         <Slider
@@ -159,10 +158,9 @@ export function DeductionsPanel({ deductions, onChange, totalDeduction }: Props)
           </Label>
           <TooltipIcon text={TOOLTIPS.education} />
         </div>
-        <input
-          type="number"
+        <NumberInput
           value={deductions.educationExpenses}
-          onChange={(e) => updateDeduction("educationExpenses", Number(e.target.value))}
+          onChange={(v) => updateDeduction("educationExpenses", v)}
           className="w-full px-3 py-2 bg-muted border border-border/40 rounded-lg text-sm font-semibold text-foreground"
         />
         <Slider

@@ -3,9 +3,10 @@
 import { useState } from "react"
 import { Slider } from "@/components/ui/slider"
 import { findRequiredGross } from "@/lib/reverseCalc"
-import { type DeductionInputs } from "@/lib/taxEngine"
-import type { SsCategory } from "@/lib/brackets"
+import { type DeductionInputs, type VatPayer } from "@/lib/taxEngine"
+import { IVA_STANDARD_RATE, type SsCategory } from "@/lib/brackets"
 import { PriceWithUSD } from "@/components/PriceWithUSD"
+import { UI } from "@/lib/constants"
 
 interface Props {
   activityYear: 1 | 2 | 3
@@ -13,9 +14,19 @@ interface Props {
   coefficient: number
   ssCategory: SsCategory
   deductions?: DeductionInputs
+  vatEnabled?: boolean
+  vatPayer?: VatPayer
 }
 
-export function ReverseCalculator({ activityYear, hasNHR, coefficient, ssCategory, deductions }: Props) {
+export function ReverseCalculator({
+  activityYear,
+  hasNHR,
+  coefficient,
+  ssCategory,
+  deductions,
+  vatEnabled = false,
+  vatPayer = "client",
+}: Props) {
   const [targetNet, setTargetNet] = useState(5000)
 
   const result = findRequiredGross(targetNet, activityYear, hasNHR, coefficient, ssCategory, deductions)
@@ -23,6 +34,11 @@ export function ReverseCalculator({ activityYear, hasNHR, coefficient, ssCategor
   const nhrCardClassName = hasNHR
     ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/20 dark:text-amber-400"
     : "border-border bg-muted/20 text-muted-foreground opacity-60"
+
+  // Знайдений gross — це завжди оподатковувана сума. Якщо ПДВ увімкнений, показуємо, яку
+  // суму треба фактично виставити/погодити з клієнтом, щоб отримати саме цей net.
+  const vatInvoiceLabel = vatPayer === "client" ? UI.vat.reverseInvoiceLabel : UI.vat.reverseBudgetLabel
+  const vatMultiplier = 1 + IVA_STANDARD_RATE
 
   return (
     <div className="space-y-6">
@@ -71,6 +87,12 @@ export function ReverseCalculator({ activityYear, hasNHR, coefficient, ssCategor
           <p className="text-xs text-muted-foreground border-t border-border/40 pt-1 mt-1">
             <span className="font-medium">Річно:</span> <PriceWithUSD amountEUR={result.grossFL} />
           </p>
+          {vatEnabled && (
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium">{vatInvoiceLabel}:</span>{" "}
+              <PriceWithUSD amountEUR={result.grossFL * vatMultiplier} reserveUSDSpace={false} />
+            </p>
+          )}
         </div>
 
         {/* NHR режим */}
@@ -98,6 +120,12 @@ export function ReverseCalculator({ activityYear, hasNHR, coefficient, ssCategor
           <p className="text-xs border-t border-current/20 pt-1 mt-1">
             <span className="font-medium">Річно:</span> <PriceWithUSD amountEUR={result.grossNHR} />
           </p>
+          {vatEnabled && hasNHR && (
+            <p className="text-xs">
+              <span className="font-medium">{vatInvoiceLabel}:</span>{" "}
+              <PriceWithUSD amountEUR={result.grossNHR * vatMultiplier} reserveUSDSpace={false} />
+            </p>
+          )}
         </div>
       </div>
 

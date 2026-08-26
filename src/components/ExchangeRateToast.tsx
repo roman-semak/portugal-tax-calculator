@@ -49,11 +49,6 @@ export function useExchangeRate() {
     }
 
     fetchRate()
-
-    // Оновлюємо кожні 5 хвилин (300 сек)
-    const interval = setInterval(fetchRate, 5 * 60 * 1000)
-
-    return () => clearInterval(interval)
   }, [])
 
   return state

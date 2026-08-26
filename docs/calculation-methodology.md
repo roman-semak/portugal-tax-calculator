@@ -9,7 +9,7 @@
 - **B2B / ФОП** — Категорія B, `regime simplificado`, `calcAll` (`taxEngine.ts`);
 - **Найм** — Категорія A, `contrato de trabalho`, `calcEmployeeAll` (`employeeEngine.ts`).
 
-Розділи 1–10 описують режим B2B. Розділ 11 описує режим найму.
+Розділи 1–10 описують режим B2B. Розділ 11 описує режим найму. Розділ 12 описує ПДВ (IVA), який стосується тільки B2B.
 
 ## 1. Вхідний дохід
 
@@ -208,3 +208,38 @@ specificDeduction = 8.54 * IAS  # Art. 25.º CIRS, ≈ €4 587 (2026, IAS = €
 **IRS і solidarity surcharge:** ті самі функції `applyMarriedSplit`, `calcDependentTaxCredit`, `calcSolidaritySurcharge`, що й для B2B, застосовані до `taxableIncome` замість `taxableBaseReduced`. IFICI (якщо увімкнений) — той самий flat 20%. `applyMarriedSplit` також застосовує mínimo de existência (Art. 70.º CIRS, €12 880 у 2026) — повне звільнення від IRS при таксованому доході на цьому рівні чи нижче; тому дохід на рівні мінімальної зарплати (€920×14) дає IRS = 0.
 
 **Джерела:** CIRS Art. 25.º (dedução específica), Código do Trabalho (subsídio de férias/Natal, DL 7/2009 та зміни), Decreto-Lei 89/2013 (regime contributivo, TSU).
+
+## 12. ПДВ (IVA) — тільки для B2B
+
+Реалізовано в `calcVat` (`src/lib/taxEngine.ts`). ПДВ ніколи не є доходом ФОП — питання лише в тому, хто його економічно несе, і саме це визначає перемикач `vatPayer`:
+
+```text
+vatEnabled = false:
+  taxableGrossAnnual = enteredAmount   # без змін
+
+vatEnabled = true, vatPayer = "client":
+  taxableGrossAnnual = enteredAmount               # введена сума — ставка БЕЗ ПДВ
+  invoicedAmount     = enteredAmount * 1.23         # клієнт платить це зверху
+  vatAmount          = enteredAmount * 0.23
+
+vatEnabled = true, vatPayer = "self":
+  taxableGrossAnnual = enteredAmount / 1.23         # введена сума — це весь бюджет клієнта, З ПДВ
+  vatAmount          = enteredAmount - taxableGrossAnnual
+  invoicedAmount     = enteredAmount
+```
+
+`taxableGrossAnnual` — це те, що далі йде в `calcAll` як `grossAnnual`, тому в режимі `"self"` ПДВ фактично зменшує оподатковувану базу для IRS і Segurança Social (менша сума — це та, що реально належить ФОП; решта — зобов'язання перед державою, яке ніколи не було його доходом). У режимі `"client"` жодне число в розрахунку IRS/SS не змінюється — ПДВ є чистим додатковим рядком (`invoicedAmount`) без впливу на net.
+
+Приклад для введених €1 000 (`vatEnabled = true`):
+
+| | `vatPayer = "client"` | `vatPayer = "self"` |
+| --- | --- | --- |
+| Оподатковуваний gross | €1 000 | €813.01 |
+| ПДВ | €230.00 (зверху) | €186.99 (з тієї ж суми) |
+| Рахунок клієнту | €1 230.00 | €1 000.00 |
+
+Стандартна ставка: **23%** (Continente; Açores 16%, Madeira 22% не моделюються — узгоджено з іншими регіональними спрощеннями калькулятора). Поріг обов'язкової реєстрації ПДВ (`IVA_EXEMPTION_THRESHOLD`, Art. 53.º CIVA, regime de isenção) — **€15 000/рік** (піднято з €14 500 законом Lei n.º 24-D/2022, з 2025 року); допуск 25% до **€18 750** (`IVA_EXEMPTION_TOLERANCE_CEILING`) — у межах цього діапазону перехід на звичайний режим ПДВ відкладається до 1 січня наступного року, вище — стається негайно.
+
+**Не моделюється:** перевірка реєстрації/права на звільнення нижче порогу (перемикач — вільний вибір користувача), вхідний ПДВ до відрахування (дедукція придбань), і статус клієнта (reverse-charge для іноземних B2B-клієнтів — послуги, надані бізнес-клієнтам поза Португалією, зазвичай взагалі не підлягають португальському ПДВ незалежно від реєстрації; це лише згадується в тултіпі, не впливає на розрахунок).
+
+Джерела: Portal das Finanças, Código do IVA, Artigo 53.º: https://info.portaldasfinancas.gov.pt/pt/informacao_fiscal/codigos_tributarios/civa_rep/Pages/artigo-53-o-do-civa.aspx; Lei n.º 24-D/2022 (підвищення порогу з 2025 року).
